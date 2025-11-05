@@ -59,7 +59,6 @@ interface Certification {
   relevance: string;
 }
 
-
 interface Resume {
   contact: Contact;
   experience: Experience[];
@@ -71,7 +70,6 @@ interface Resume {
 }
 
 type Tab = 'contact' | 'experience' | 'project' | 'education' | 'certifications' | 'skills' | 'summary' | 'preview';
-
 
 // --- CONSTANTS ---
 const DEFAULT_RESUME: Resume = {
@@ -135,23 +133,110 @@ const DEFAULT_RESUME: Resume = {
 };
 
 
+// --- SERVICES ---
+const extractKeywords = (text: string): string[] => {
+    if (!text) {
+      return [];
+    }
+    const stopWords = new Set([
+      'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours',
+      'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', 'her', 'hers',
+      'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves',
+      'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are',
+      'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does',
+      'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until',
+      'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into',
+      'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down',
+      'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here',
+      'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more',
+      'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so',
+      'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 'should', 'now',
+      'also', 'use', 'using', 'new', 'get', 'like', '•'
+    ]);
+    const words = text
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .split(/\s+/)
+      .filter(word => word.length > 2 && !stopWords.has(word));
+    return [...new Set(words)];
+};
+
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
+
+function formatResumeAsText(resume: Resume): string {
+    let resumeText = `Name: ${resume.contact.full_name}\n`;
+    resumeText += `Contact: ${resume.contact.email}, ${resume.contact.phone}\n`;
+    resumeText += `Links: LinkedIn: ${resume.contact.linkedin_url}, Website: ${resume.contact.personal_website}\n\n`;
+    resumeText += `Summary:\n${resume.summary}\n\n`;
+    resumeText += "Experience:\n";
+    resume.experience.forEach(exp => {
+        resumeText += `- ${exp.role} at ${exp.company} (${exp.start_date} - ${exp.end_date})\n`;
+        resumeText += `  - ${exp.description}\n`;
+    });
+    resumeText += "\n";
+    resumeText += "Education:\n";
+    resume.education.forEach(edu => {
+        resumeText += `- ${edu.degree}, ${edu.institution} (${edu.graduation_year})\n`;
+    });
+    resumeText += "\n";
+    resumeText += "Projects:\n";
+    resume.projects.forEach(proj => {
+        resumeText += `- ${proj.title} - ${proj.organization}\n`;
+    });
+    resumeText += "\n";
+    resumeText += "Skills:\n";
+    resumeText += resume.skills + '\n';
+    return resumeText;
+}
+
+const analyzeResumeWithGemini = async (resume: Resume, jobDescription: string): Promise<string> => {
+    const resumeText = formatResumeAsText(resume);
+    const prompt = `
+        Analyze the following resume against the job description and provide feedback.
+        The analysis should focus on how well the resume is tailored to the job, highlighting strengths and weaknesses.
+        Provide a percentage match score.
+        Suggest specific improvements to the resume summary and experience descriptions to better align with the job requirements, using keywords from the job description.
+        Format the output as Markdown.
+
+        ---
+        RESUME:
+        ---
+        ${resumeText}
+
+        ---
+        JOB DESCRIPTION:
+        ---
+        ${jobDescription}
+    `;
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: prompt,
+        });
+        return response.text;
+    } catch (error) {
+        console.error("Error analyzing resume with Gemini:", error);
+        if (error instanceof Error) {
+            return `An error occurred during analysis: ${error.message}`;
+        }
+        return "An unknown error occurred during analysis.";
+    }
+};
+
 // --- COMPONENTS ---
 
 const ModernTemplate: React.FC<{ resume: Resume; }> = ({ resume }) => {
   const { contact, summary, experience, education, skills, projects, certifications } = resume;
-
   const locationString = [
     contact.state_show_on_resume ? contact.state : null,
     contact.country_show_on_resume ? contact.country : null
   ].filter(Boolean).join(', ');
-
   const Section: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
     <section className="mb-4">
       <h2 className="text-sm font-bold uppercase tracking-wider border-b-2 border-gray-300 mb-2 pb-1 text-gray-800">{title}</h2>
       {children}
     </section>
   );
-
   return (
     <div className="font-sans text-sm text-gray-700">
       <header className="text-center mb-6">
@@ -174,102 +259,53 @@ const ModernTemplate: React.FC<{ resume: Resume; }> = ({ resume }) => {
            </>}
         </div>
       </header>
-      
-      {summary && <Section title="Summary">
-        <div
-          className="[&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
-          dangerouslySetInnerHTML={{ __html: marked.parse(summary) }}
-        />
-      </Section>}
-
+      {summary && <Section title="Summary"><div className="[&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(summary) }} /></Section>}
       {experience.length > 0 && (
         <Section title="Experience">
           {experience.map(exp => (
             <div key={exp.id} className="mb-3">
-              <div className="flex justify-between items-baseline">
-                <h3 className="font-bold text-md text-black">{exp.role}</h3>
-                <span className="text-xs font-mono text-gray-500">{exp.start_date} - {exp.end_date}</span>
-              </div>
-              <div className="flex justify-between items-baseline">
-                <h4 className="italic text-sm text-gray-600">{exp.company}</h4>
-                <span className="text-xs font-mono text-gray-500">{exp.location}</span>
-              </div>
-              <div
-                className="mt-1 text-sm [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
-                dangerouslySetInnerHTML={{ __html: marked.parse(exp.description) }}
-              />
+              <div className="flex justify-between items-baseline"><h3 className="font-bold text-md text-black">{exp.role}</h3><span className="text-xs font-mono text-gray-500">{exp.start_date} - {exp.end_date}</span></div>
+              <div className="flex justify-between items-baseline"><h4 className="italic text-sm text-gray-600">{exp.company}</h4><span className="text-xs font-mono text-gray-500">{exp.location}</span></div>
+              <div className="mt-1 text-sm [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(exp.description) }} />
             </div>
           ))}
         </Section>
       )}
-
       {projects.length > 0 && (
         <Section title="Projects">
           {projects.map(proj => (
             <div key={proj.id} className="mb-3">
-              <div className="flex justify-between items-baseline">
-                <h3 className="font-bold text-md text-black">{proj.title}</h3>
-                 <span className="text-xs font-mono text-gray-500">{proj.start_date} - {proj.end_date}</span>
-              </div>
+              <div className="flex justify-between items-baseline"><h3 className="font-bold text-md text-black">{proj.title}</h3><span className="text-xs font-mono text-gray-500">{proj.start_date} - {proj.end_date}</span></div>
               <h4 className="italic text-sm text-gray-600">{proj.organization}</h4>
-              <div
-                className="mt-1 text-sm [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
-                dangerouslySetInnerHTML={{ __html: marked.parse(proj.description) }}
-              />
+              <div className="mt-1 text-sm [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(proj.description) }} />
             </div>
           ))}
         </Section>
       )}
-
       {education.length > 0 && (
         <Section title="Education">
           {education.map(edu => (
             <div key={edu.id} className="mb-2">
-              <div className="flex justify-between items-baseline">
-                <h3 className="font-bold text-black">{edu.institution}</h3>
-                <span className="text-xs font-mono text-gray-500">{edu.graduation_year}</span>
-              </div>
+              <div className="flex justify-between items-baseline"><h3 className="font-bold text-black">{edu.institution}</h3><span className="text-xs font-mono text-gray-500">{edu.graduation_year}</span></div>
               <p className="italic text-gray-600">{edu.degree}{edu.minor && `, Minor in ${edu.minor}`}</p>
               {edu.gpa && <p className="text-xs">GPA: {edu.gpa}</p>}
-              {edu.additional_info && (
-                <div 
-                  className="text-xs mt-1 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(edu.additional_info) }}
-                />
-              )}
+              {edu.additional_info && (<div className="text-xs mt-1 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(edu.additional_info) }} />)}
             </div>
           ))}
         </Section>
       )}
-      
        {certifications.length > 0 && (
         <Section title="Certifications">
           {certifications.map(cert => (
             <div key={cert.id} className="mb-2">
-              <div className="flex justify-between items-baseline">
-                <h3 className="font-bold text-black">{cert.certificate_name}</h3>
-                <span className="text-xs font-mono text-gray-500">{cert.issue_year}</span>
-              </div>
+              <div className="flex justify-between items-baseline"><h3 className="font-bold text-black">{cert.certificate_name}</h3><span className="text-xs font-mono text-gray-500">{cert.issue_year}</span></div>
               <p className="italic text-gray-600">{cert.issuing_organization}</p>
-              {cert.relevance && (
-                <div 
-                  className="text-xs mt-1 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
-                  dangerouslySetInnerHTML={{ __html: marked.parse(cert.relevance) }}
-                />
-              )}
+              {cert.relevance && (<div className="text-xs mt-1 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(cert.relevance) }} />)}
             </div>
           ))}
         </Section>
       )}
-
-      {skills && (
-        <Section title="Skills">
-          <div
-            className="whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
-            dangerouslySetInnerHTML={{ __html: marked.parse(skills) }}
-          />
-        </Section>
-      )}
+      {skills && (<Section title="Skills"><div className="whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1" dangerouslySetInnerHTML={{ __html: marked.parse(skills) }} /></Section>)}
     </div>
   );
 };
@@ -278,90 +314,49 @@ const TabButton: React.FC<{label: string; isActive: boolean; onClick: () => void
     const baseClasses = "px-3 py-1.5 text-xs font-semibold rounded-md transition-colors duration-200 uppercase";
     const activeClasses = "bg-accent text-white";
     const inactiveClasses = "hover:bg-secondary-bg text-secondary-text";
-
-    return (
-        <button
-            onClick={onClick}
-            className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses}`}
-        >
-            {label}
-        </button>
-    )
+    return (<button onClick={onClick} className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses}`}>{label}</button>)
 }
 
 const Header: React.FC<{ activeTab: Tab; setActiveTab: (tab: Tab) => void;}> = ({ activeTab, setActiveTab }) => {
   const tabs: { id: Tab; label: string }[] = [
-    { id: 'contact', label: 'Contact' },
-    { id: 'experience', label: 'Experience' },
-    { id: 'project', label: 'Project' },
-    { id: 'education', label: 'Education' },
-    { id: 'certifications', label: 'Certifications' },
-    { id: 'skills', label: 'Skills' },
-    { id: 'summary', label: 'Summary' },
-    { id: 'preview', label: 'Preview' },
+    { id: 'contact', label: 'Contact' }, { id: 'experience', label: 'Experience' }, { id: 'project', label: 'Project' },
+    { id: 'education', label: 'Education' }, { id: 'certifications', label: 'Certifications' }, { id: 'skills', label: 'Skills' },
+    { id: 'summary', label: 'Summary' }, { id: 'preview', label: 'Preview' },
   ];
-
   return (
     <header className="bg-primary-bg p-4 border-b border-border-color">
       <div className="max-w-7xl mx-auto flex justify-center items-center">
         <nav className="flex items-center space-x-1 flex-wrap justify-center">
-          {tabs.map(tab => (
-            <TabButton
-              key={tab.id}
-              label={tab.label}
-              isActive={activeTab === tab.id}
-              onClick={() => setActiveTab(tab.id)}
-            />
-          ))}
+          {tabs.map(tab => (<TabButton key={tab.id} label={tab.label} isActive={activeTab === tab.id} onClick={() => setActiveTab(tab.id)} />))}
         </nav>
       </div>
     </header>
   );
 };
 
-
 const EditorSection = <T extends { id: string; [key: string]: any }>({ title, items, setItems, newItem, children }: {
-  title: string;
-  items: T[];
-  setItems: (items: T[]) => void;
-  newItem: Omit<T, 'id'>;
+  title: string; items: T[]; setItems: (items: T[]) => void; newItem: Omit<T, 'id'>;
   children: (item: T, handleChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void, index: number) => React.ReactNode;
 }) => {
-  const handleAddItem = () => {
-    const newId = `${title.toLowerCase()}-${Date.now()}`;
-    setItems([...items, { ...newItem, id: newId } as T]);
-  };
-
-  const handleRemoveItem = (id: string) => {
-    setItems(items.filter(item => item.id !== id));
-  };
-
+  const handleAddItem = () => { const newId = `${title.toLowerCase()}-${Date.now()}`; setItems([...items, { ...newItem, id: newId } as T]); };
+  const handleRemoveItem = (id: string) => { setItems(items.filter(item => item.id !== id)); };
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>, index: number) => {
-    const { name, value } = e.target;
-    const updatedItems = [...items];
-    updatedItems[index] = { ...updatedItems[index], [name]: value };
-    setItems(updatedItems);
+    const { name, value } = e.target; const updatedItems = [...items];
+    updatedItems[index] = { ...updatedItems[index], [name]: value }; setItems(updatedItems);
   };
-
   return (
     <div>
       {items.map((item, index) => (
         <div key={item.id} className="mb-8 p-6 border border-border-color rounded-lg">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-xl font-semibold text-primary-text">{title} {index + 1}</h3>
-            {items.length > 0 && (
-              <button onClick={() => handleRemoveItem(item.id)} className="text-red-500 text-sm hover:underline">
-                Remove
-              </button>
-            )}
+            {items.length > 0 && (<button onClick={() => handleRemoveItem(item.id)} className="text-red-500 text-sm hover:underline">Remove</button>)}
           </div>
           {children(item, (e) => handleChange(e, index), index)}
         </div>
       ))}
       <div className="flex justify-end mt-6">
-        <button onClick={handleAddItem} className="px-6 py-3 bg-accent text-white rounded-md hover:opacity-90 font-semibold">
-          Add to {title}
-        </button>
+        <button onClick={handleAddItem} className="px-6 py-3 bg-accent text-white rounded-md hover:opacity-90 font-semibold">Add to {title}</button>
       </div>
     </div>
   );
@@ -370,356 +365,164 @@ const EditorSection = <T extends { id: string; [key: string]: any }>({ title, it
 const InputField = ({ label, name, value, onChange, placeholder = '' }: { label: string, name: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, placeholder?: string}) => (
     <div>
         <label className="text-xs text-secondary-text font-bold uppercase tracking-wider mb-2 block">{label}</label>
-        <input
-            type="text"
-            name={name}
-            value={value}
-            onChange={onChange}
-            placeholder={placeholder}
-            className="w-full p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent"
-        />
+        <input type="text" name={name} value={value} onChange={onChange} placeholder={placeholder} className="w-full p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent" />
     </div>
 );
 
 const TextAreaField = ({ label, name, value, onChange }: { label: string, name: string, value: string, onChange: (e: React.ChangeEvent<HTMLTextAreaElement>) => void}) => (
     <div>
         <label className="text-xs text-secondary-text font-bold uppercase tracking-wider mb-2 block">{label}</label>
-        <textarea
-            name={name}
-            value={value}
-            onChange={onChange}
-            rows={5}
-            className="w-full p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent"
-            placeholder="Describe your responsibilities and achievements."
-        />
+        <textarea name={name} value={value} onChange={onChange} rows={5} className="w-full p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent" placeholder="Describe your responsibilities and achievements." />
     </div>
 );
 
 const Editor: React.FC<{ activeTab: string; resume: Resume; setResume: React.Dispatch<React.SetStateAction<Resume>>; }> = ({ activeTab, resume, setResume }) => {
   const handleContactChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
-    setResume(prev => ({
-      ...prev,
-      contact: {
-        ...prev.contact,
-        [name]: type === 'checkbox' ? checked : value,
-      },
-    }));
+    setResume(prev => ({ ...prev, contact: { ...prev.contact, [name]: type === 'checkbox' ? checked : value } }));
   };
-  
   const handleSimpleChange = (e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) => {
-      const { name, value } = e.target;
-      setResume(prev => ({ ...prev, [name]: value }));
+      const { name, value } = e.target; setResume(prev => ({ ...prev, [name]: value }));
   }
-
   const renderField = (label: string, name: keyof Resume['contact']) => (
     <div>
-        <label className="text-xs text-secondary-text font-bold uppercase tracking-wider">
-            {label}
-        </label>
-        <input
-            type="text"
-            name={name}
-            value={resume.contact[name] as string}
-            onChange={handleContactChange}
-            className="w-full mt-2 p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent"
-        />
+        <label className="text-xs text-secondary-text font-bold uppercase tracking-wider">{label}</label>
+        <input type="text" name={name} value={resume.contact[name] as string} onChange={handleContactChange} className="w-full mt-2 p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent" />
     </div>
   );
-
    const renderToggle = (label: string, name: keyof Resume['contact']) => (
     <div className="flex items-center gap-2">
-      <input
-        type="checkbox"
-        id={name}
-        name={name}
-        checked={!!resume.contact[name]}
-        onChange={handleContactChange}
-        className="h-4 w-4 rounded border-border-color bg-secondary-bg text-accent focus:ring-accent"
-      />
-      <label htmlFor={name} className="text-sm text-primary-text">
-        {label}
-      </label>
+      <input type="checkbox" id={name} name={name} checked={!!resume.contact[name]} onChange={handleContactChange} className="h-4 w-4 rounded border-border-color bg-secondary-bg text-accent focus:ring-accent" />
+      <label htmlFor={name} className="text-sm text-primary-text">{label}</label>
     </div>
   );
-
   return (
     <div className="max-w-4xl mx-auto">
         <div className="bg-secondary-bg p-8 rounded-lg border border-border-color">
-            {activeTab === 'contact' && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {renderField("Full Name", "full_name")}
-                    {renderField("Email Address", "email")}
-                    {renderField("Phone Number", "phone")}
-                    {renderField("LinkedIn URL", "linkedin_url")}
-                    {renderField("Personal Website", "personal_website")}
-                    {renderField("Country", "country")}
-                    {renderField("State", "state")}
-                    <div className="md:col-span-2 grid grid-cols-2 gap-4 pt-4">
-                        {renderToggle("Show Country on Resume", "country_show_on_resume")}
-                        {renderToggle("Show State on Resume", "state_show_on_resume")}
-                    </div>
-                </div>
-            )}
-            
-            {activeTab === 'experience' && (
-                <EditorSection<Experience>
-                    title="Experience"
-                    items={resume.experience}
-                    setItems={(items) => setResume(prev => ({ ...prev, experience: items }))}
-                    newItem={{ role: '', company: '', start_date: '', end_date: '', location: '', description: '' }}
-                    children={(item, handleChange) => (
-                        <div className="space-y-4">
-                            <InputField label="Role" name="role" value={item.role} onChange={handleChange} />
-                            <InputField label="Company" name="company" value={item.company} onChange={handleChange} />
-                            <div className="grid grid-cols-2 gap-4">
-                                <InputField label="Start Date" name="start_date" value={item.start_date} onChange={handleChange} placeholder="e.g. Oct 2022" />
-                                <InputField label="End Date" name="end_date" value={item.end_date} onChange={handleChange} placeholder="e.g. Present" />
-                            </div>
-                            <InputField label="Location" name="location" value={item.location} onChange={handleChange} placeholder="e.g. New York, NY"/>
-                            <TextAreaField label="Description" name="description" value={item.description} onChange={handleChange} />
-                        </div>
-                    )}
-                />
-            )}
-
-             {activeTab === 'project' && (
-                <EditorSection<Project>
-                    title="Project"
-                    items={resume.projects}
-                    setItems={(items) => setResume(prev => ({...prev, projects: items}))}
-                    newItem={{title: '', organization: '', start_date: '', end_date: '', project_url: '', description: ''}}
-                    children={(item, handleChange) => (
-                        <div className="space-y-4">
-                             <InputField label="Title" name="title" value={item.title} onChange={handleChange} />
-                             <InputField label="Organization" name="organization" value={item.organization} onChange={handleChange} />
-                            <div className="grid grid-cols-2 gap-4">
-                                 <InputField label="Start Date" name="start_date" value={item.start_date} onChange={handleChange} placeholder="e.g. Oct 2022" />
-                                 <InputField label="End Date" name="end_date" value={item.end_date} onChange={handleChange} placeholder="e.g. Present" />
-                            </div>
-                             <InputField label="Project URL" name="project_url" value={item.project_url} onChange={handleChange} />
-                             <TextAreaField label="Description" name="description" value={item.description} onChange={handleChange} />
-                        </div>
-                    )}
-                />
-            )}
-
-            {activeTab === 'education' && (
-                <EditorSection<Education>
-                    title="Education"
-                    items={resume.education}
-                    setItems={(items) => setResume(prev => ({...prev, education: items}))}
-                    newItem={{degree: '', institution: '', location: '', graduation_year: '', minor: '', gpa: '', additional_info: ''}}
-                    children={(item, handleChange) => (
-                        <div className="space-y-4">
-                            <InputField label="Degree" name="degree" value={item.degree} onChange={handleChange}/>
-                            <InputField label="Institution" name="institution" value={item.institution} onChange={handleChange}/>
-                            <InputField label="Location" name="location" value={item.location} onChange={handleChange}/>
-                            <InputField label="Graduation Year" name="graduation_year" value={item.graduation_year} onChange={handleChange}/>
-                            <InputField label="Minor" name="minor" value={item.minor} onChange={handleChange}/>
-                            <InputField label="GPA" name="gpa" value={item.gpa} onChange={handleChange}/>
-                            <TextAreaField label="Additional Info" name="additional_info" value={item.additional_info} onChange={handleChange}/>
-                        </div>
-                    )}
-                />
-            )}
-
-            {activeTab === 'certifications' && (
-                 <EditorSection<Certification>
-                    title="Certifications"
-                    items={resume.certifications}
-                    setItems={(items) => setResume(prev => ({...prev, certifications: items}))}
-                    newItem={{certificate_name: '', issuing_organization: '', issue_year: '', relevance: ''}}
-                    children={(item, handleChange) => (
-                        <div className="space-y-4">
-                            <InputField label="Certificate Name" name="certificate_name" value={item.certificate_name} onChange={handleChange}/>
-                            <InputField label="Issuing Organization" name="issuing_organization" value={item.issuing_organization} onChange={handleChange}/>
-                            <InputField label="Issue Year" name="issue_year" value={item.issue_year} onChange={handleChange}/>
-                            <TextAreaField label="Relevance" name="relevance" value={item.relevance} onChange={handleChange}/>
-                        </div>
-                    )}
-                />
-            )}
-
-            {activeTab === 'skills' && (
-                <div className="space-y-4">
-                    <div>
-                        <label className="text-xs text-secondary-text font-bold uppercase tracking-wider">
-                           Skills
-                        </label>
-                        <textarea
-                            name="skills"
-                            value={resume.skills}
-                            onChange={handleSimpleChange}
-                            rows={6}
-                            className="w-full mt-2 p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent"
-                            placeholder="e.g. React, JavaScript, Project Management"
-                        />
-                    </div>
-                </div>
-            )}
-
-            {activeTab === 'summary' && (
-                <div className="space-y-4">
-                    <div>
-                         <label className="text-xs text-secondary-text font-bold uppercase tracking-wider">
-                           Professional Summary
-                        </label>
-                        <textarea
-                            name="summary"
-                            value={resume.summary}
-                            onChange={handleSimpleChange}
-                            rows={8}
-                            className="w-full mt-2 p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent"
-                        />
-                    </div>
-                </div>
-            )}
+            {activeTab === 'contact' && (<div className="grid grid-cols-1 md:grid-cols-2 gap-6">{renderField("Full Name", "full_name")}{renderField("Email Address", "email")}{renderField("Phone Number", "phone")}{renderField("LinkedIn URL", "linkedin_url")}{renderField("Personal Website", "personal_website")}{renderField("Country", "country")}{renderField("State", "state")}<div className="md:col-span-2 grid grid-cols-2 gap-4 pt-4">{renderToggle("Show Country on Resume", "country_show_on_resume")}{renderToggle("Show State on Resume", "state_show_on_resume")}</div></div>)}
+            {activeTab === 'experience' && (<EditorSection<Experience> title="Experience" items={resume.experience} setItems={(items) => setResume(prev => ({ ...prev, experience: items }))} newItem={{ role: '', company: '', start_date: '', end_date: '', location: '', description: '' }}>{(item, handleChange) => (<div className="space-y-4"><InputField label="Role" name="role" value={item.role} onChange={handleChange} /><InputField label="Company" name="company" value={item.company} onChange={handleChange} /><div className="grid grid-cols-2 gap-4"><InputField label="Start Date" name="start_date" value={item.start_date} onChange={handleChange} placeholder="e.g. Oct 2022" /><InputField label="End Date" name="end_date" value={item.end_date} onChange={handleChange} placeholder="e.g. Present" /></div><InputField label="Location" name="location" value={item.location} onChange={handleChange} placeholder="e.g. New York, NY"/><TextAreaField label="Description" name="description" value={item.description} onChange={handleChange} /></div>)}</EditorSection>)}
+            {activeTab === 'project' && (<EditorSection<Project> title="Project" items={resume.projects} setItems={(items) => setResume(prev => ({...prev, projects: items}))} newItem={{title: '', organization: '', start_date: '', end_date: '', project_url: '', description: ''}}>{(item, handleChange) => (<div className="space-y-4"><InputField label="Title" name="title" value={item.title} onChange={handleChange} /><InputField label="Organization" name="organization" value={item.organization} onChange={handleChange} /><div className="grid grid-cols-2 gap-4"><InputField label="Start Date" name="start_date" value={item.start_date} onChange={handleChange} placeholder="e.g. Oct 2022" /><InputField label="End Date" name="end_date" value={item.end_date} onChange={handleChange} placeholder="e.g. Present" /></div><InputField label="Project URL" name="project_url" value={item.project_url} onChange={handleChange} /><TextAreaField label="Description" name="description" value={item.description} onChange={handleChange} /></div>)}</EditorSection>)}
+            {activeTab === 'education' && (<EditorSection<Education> title="Education" items={resume.education} setItems={(items) => setResume(prev => ({...prev, education: items}))} newItem={{degree: '', institution: '', location: '', graduation_year: '', minor: '', gpa: '', additional_info: ''}}>{(item, handleChange) => (<div className="space-y-4"><InputField label="Degree" name="degree" value={item.degree} onChange={handleChange}/><InputField label="Institution" name="institution" value={item.institution} onChange={handleChange}/><InputField label="Location" name="location" value={item.location} onChange={handleChange}/><InputField label="Graduation Year" name="graduation_year" value={item.graduation_year} onChange={handleChange}/><InputField label="Minor" name="minor" value={item.minor} onChange={handleChange}/><InputField label="GPA" name="gpa" value={item.gpa} onChange={handleChange}/><TextAreaField label="Additional Info" name="additional_info" value={item.additional_info} onChange={handleChange}/></div>)}</EditorSection>)}
+            {activeTab === 'certifications' && (<EditorSection<Certification> title="Certifications" items={resume.certifications} setItems={(items) => setResume(prev => ({...prev, certifications: items}))} newItem={{certificate_name: '', issuing_organization: '', issue_year: '', relevance: ''}}>{(item, handleChange) => (<div className="space-y-4"><InputField label="Certificate Name" name="certificate_name" value={item.certificate_name} onChange={handleChange}/><InputField label="Issuing Organization" name="issuing_organization" value={item.issuing_organization} onChange={handleChange}/><InputField label="Issue Year" name="issue_year" value={item.issue_year} onChange={handleChange}/><TextAreaField label="Relevance" name="relevance" value={item.relevance} onChange={handleChange}/></div>)}</EditorSection>)}
+            {activeTab === 'skills' && (<div className="space-y-4"><div><label className="text-xs text-secondary-text font-bold uppercase tracking-wider">Skills</label><textarea name="skills" value={resume.skills} onChange={handleSimpleChange} rows={6} className="w-full mt-2 p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent" placeholder="e.g. React, JavaScript, Project Management" /></div></div>)}
+            {activeTab === 'summary' && (<div className="space-y-4"><div><label className="text-xs text-secondary-text font-bold uppercase tracking-wider">Professional Summary</label><textarea name="summary" value={resume.summary} onChange={handleSimpleChange} rows={8} className="w-full mt-2 p-3 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent" /></div></div>)}
         </div>
     </div>
   );
 };
 
-
-const Preview: React.FC<{ resume: Resume; }> = ({ resume }) => {
+const Preview: React.FC<{ resume: Resume; onOpenAnalyzer: () => void; }> = ({ resume, onOpenAnalyzer }) => {
   const [fontFamily, setFontFamily] = useState('font-sans');
   const [fontSize, setFontSize] = useState('text-sm');
   const [pageCount, setPageCount] = useState(1);
   const contentRef = useRef<HTMLDivElement>(null);
-
   useEffect(() => {
     const calculatePages = () => {
       if (contentRef.current) {
-        // 11 inches total height - 1.5 inches for top/bottom padding = 9.5 inches content area.
-        // 9.5 inches * 96 pixels/inch = 912 pixels per page.
-        const pageHeightInPixels = 912;
-        const contentHeight = contentRef.current.scrollHeight;
+        const pageHeightInPixels = 912; const contentHeight = contentRef.current.scrollHeight;
         const calculatedPages = Math.ceil(contentHeight / pageHeightInPixels);
         setPageCount(calculatedPages > 0 ? calculatedPages : 1);
       }
     };
-
     calculatePages();
-
     const resizeObserver = new ResizeObserver(calculatePages);
-    if (contentRef.current) {
-      resizeObserver.observe(contentRef.current);
-    }
-
-    return () => {
-      if (contentRef.current) {
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-        resizeObserver.unobserve(contentRef.current);
-      }
-    };
+    if (contentRef.current) { resizeObserver.observe(contentRef.current); }
+    return () => { if (contentRef.current) { resizeObserver.unobserve(contentRef.current); } };
   }, [resume, fontFamily, fontSize]);
-
-  const handleExportPDF = () => {
-    window.print();
-  };
-
+  const handleExportPDF = () => { window.print(); };
   const handleExportDOCX = async () => {
     const printableElement = document.getElementById('printable-resume');
     if (printableElement) {
       try {
-        const content = `
-          <html>
-            <head>
-              <meta charset="UTF-8" />
-              <style>
-                body { font-family: ${fontFamily === 'font-sans' ? 'Calibri, sans-serif' : fontFamily === 'font-serif' ? 'Georgia, serif' : 'Courier New, monospace'}; font-size: 11pt; }
-                h1, h2, h3, h4, h5, h6 { margin: 0; padding: 0; }
-                ul { margin: 0; padding-left: 20px; }
-                p { margin: 0; }
-                a { color: #0000EE; text-decoration: underline; }
-              </style>
-            </head>
-            <body>
-              ${printableElement.innerHTML}
-            </body>
-          </html>
-        `;
+        const content = `<html><head><meta charset="UTF-8" /><style>body { font-family: ${fontFamily === 'font-sans' ? 'Calibri, sans-serif' : fontFamily === 'font-serif' ? 'Georgia, serif' : 'Courier New, monospace'}; font-size: 11pt; } h1, h2, h3, h4, h5, h6, ul, p { margin: 0; padding: 0; } ul { padding-left: 20px; } a { color: #0000EE; text-decoration: underline; }</style></head><body>${printableElement.innerHTML}</body></html>`;
         const fileBuffer = await htmlToDocx.asBlob(content);
         saveAs(fileBuffer, `${resume.contact.full_name}_Resume.docx`);
-      } catch (error) {
-        console.error("Error exporting to DOCX:", error);
-      }
+      } catch (error) { console.error("Error exporting to DOCX:", error); }
     }
   };
-  
-  const fontOptions = [
-    { value: 'font-sans', label: 'Sans-Serif' },
-    { value: 'font-serif', label: 'Serif' },
-    { value: 'font-mono', label: 'Monospace' },
-  ];
-  
-  const sizeOptions = [
-      { value: 'text-xs', label: 'Small' },
-      { value: 'text-sm', label: 'Medium' },
-      { value: 'text-base', label: 'Large' },
-  ];
-
+  const fontOptions = [{ value: 'font-sans', label: 'Sans-Serif' }, { value: 'font-serif', label: 'Serif' }, { value: 'font-mono', label: 'Monospace' }];
+  const sizeOptions = [{ value: 'text-xs', label: 'Small' }, { value: 'text-sm', label: 'Medium' }, { value: 'text-base', label: 'Large' }];
   return (
     <div className="space-y-6">
       <div className="bg-secondary-bg p-4 rounded-lg flex flex-wrap justify-center items-center gap-x-6 gap-y-4 border border-border-color">
           <div className="flex items-center gap-2">
             <label htmlFor="font-family" className="text-sm font-medium text-secondary-text">Font:</label>
-            <select
-                id="font-family"
-                value={fontFamily}
-                onChange={(e) => setFontFamily(e.target.value)}
-                className="bg-primary-bg border border-border-color text-primary-text text-sm rounded-md focus:ring-accent focus:border-accent p-2"
-            >
+            <select id="font-family" value={fontFamily} onChange={(e) => setFontFamily(e.target.value)} className="bg-primary-bg border border-border-color text-primary-text text-sm rounded-md focus:ring-accent focus:border-accent p-2">
                 {fontOptions.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
           </div>
-
           <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-secondary-text">Size:</label>
               <div className="flex items-center rounded-md border border-border-color">
-                  {sizeOptions.map((opt, index) => (
-                      <button 
-                          key={opt.value}
-                          onClick={() => setFontSize(opt.value)}
-                          className={`px-3 py-1.5 text-xs font-semibold transition-colors duration-200 
-                              ${fontSize === opt.value ? 'bg-accent text-white' : 'bg-secondary-bg text-secondary-text hover:bg-primary-bg'}
-                              ${index === 0 ? 'rounded-l-md' : ''}
-                              ${index === sizeOptions.length - 1 ? 'rounded-r-md' : ''}
-                          `}
-                      >
-                          {opt.label}
-                      </button>
-                  ))}
+                  {sizeOptions.map((opt, index) => (<button key={opt.value} onClick={() => setFontSize(opt.value)} className={`px-3 py-1.5 text-xs font-semibold transition-colors duration-200 ${fontSize === opt.value ? 'bg-accent text-white' : 'bg-secondary-bg text-secondary-text hover:bg-primary-bg'} ${index === 0 ? 'rounded-l-md' : ''} ${index === sizeOptions.length - 1 ? 'rounded-r-md' : ''}`}>{opt.label}</button>))}
               </div>
           </div>
-          
-          <div className="flex items-center gap-2 text-sm text-secondary-text">
-            <span>Pages:</span>
-            <span className="font-semibold text-primary-text">{pageCount}</span>
-          </div>
-
+          <div className="flex items-center gap-2 text-sm text-secondary-text"><span>Pages:</span><span className="font-semibold text-primary-text">{pageCount}</span></div>
+          <button onClick={onOpenAnalyzer} className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-semibold">ATS Analyzer</button>
           <div className="relative group">
-            <button className="px-4 py-2 bg-accent text-white rounded-md hover:opacity-90 font-semibold flex items-center gap-2">
-                <span>Download</span>
-                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-            </button>
+            <button className="px-4 py-2 bg-accent text-white rounded-md hover:opacity-90 font-semibold flex items-center gap-2"><span>Download</span><svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" /></svg></button>
             <div className="absolute right-0 mt-2 w-48 bg-secondary-bg border border-border-color rounded-md shadow-lg z-10 opacity-0 group-hover:opacity-100 invisible group-hover:visible transition-opacity duration-200">
                 <a href="#" onClick={(e) => { e.preventDefault(); handleExportPDF(); }} className="block px-4 py-2 text-sm text-primary-text hover:bg-primary-bg rounded-t-md">Export as PDF</a>
                 <a href="#" onClick={(e) => { e.preventDefault(); handleExportDOCX(); }} className="block px-4 py-2 text-sm text-primary-text hover:bg-primary-bg rounded-b-md">Export as DOCX</a>
             </div>
           </div>
       </div>
-        
       <div className="bg-gray-400 p-4 sm:p-8 rounded-lg shadow-inner overflow-x-auto">
-        <div 
-            id="printable-resume" 
-            className={`bg-white text-black shadow-lg mx-auto ${fontFamily} ${fontSize}`}
-            style={{ width: '8.5in', minHeight: '11in', padding: '0.75in' }}
-        >
-          <div ref={contentRef}>
-            <ModernTemplate resume={resume} />
+        <div id="printable-resume" className={`bg-white text-black shadow-lg mx-auto ${fontFamily} ${fontSize}`} style={{ width: '8.5in', minHeight: '11in', padding: '0.75in' }}>
+          <div ref={contentRef}><ModernTemplate resume={resume} /></div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const KeywordAnalyzer: React.FC<{ resume: Resume; isOpen: boolean; onClose: () => void; }> = ({ resume, isOpen, onClose }) => {
+  const [jobDescription, setJobDescription] = useState('');
+  const [analysisResult, setAnalysisResult] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const handleAnalyze = async () => {
+    if (!jobDescription.trim()) { setError('Please paste a job description.'); return; }
+    setError(''); setIsLoading(true); setAnalysisResult('');
+    try {
+      const result = await analyzeResumeWithGemini(resume, jobDescription);
+      setAnalysisResult(result);
+    } catch (err) { setError('Failed to analyze. Please try again.'); console.error(err); } 
+    finally { setIsLoading(false); }
+  };
+  const getResumeKeywords = () => {
+      const resumeText = `${resume.summary} ${resume.experience.map(e => e.description).join(' ')} ${resume.skills}`;
+      return extractKeywords(resumeText);
+  }
+  const jobKeywords = extractKeywords(jobDescription);
+  const resumeKeywords = getResumeKeywords();
+  const matchedKeywords = jobKeywords.filter(k => resumeKeywords.includes(k));
+  const missingKeywords = jobKeywords.filter(k => !resumeKeywords.includes(k));
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center p-4">
+      <div className="bg-primary-bg rounded-lg shadow-xl w-full max-w-4xl h-[90vh] flex flex-col">
+        <div className="p-4 border-b border-border-color flex justify-between items-center"><h2 className="text-xl font-bold text-primary-text">ATS Analyzer</h2><button onClick={onClose} className="text-primary-text text-2xl">&times;</button></div>
+        <div className="flex-grow overflow-hidden grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
+          <div className="flex flex-col gap-4 overflow-y-auto pr-2">
+            <div>
+              <label htmlFor="job-description" className="block text-sm font-medium text-secondary-text mb-1">Paste Job Description</label>
+              <textarea id="job-description" rows={10} value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} className="w-full p-2 border border-border-color rounded-md bg-secondary-bg text-primary-text focus:ring-2 focus:ring-accent" placeholder="Paste the full job description here..."/>
+              {error && <p className="text-red-500 text-sm mt-1">{error}</p>}
+            </div>
+            <button onClick={handleAnalyze} disabled={isLoading} className="w-full px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 font-semibold disabled:bg-gray-500">{isLoading ? 'Analyzing...' : 'Analyze with Gemini'}</button>
+            <div className="space-y-3">
+                <h3 className="font-semibold text-primary-text">Keyword Match Analysis</h3>
+                <p className="text-sm text-secondary-text">Matching {matchedKeywords.length} of {jobKeywords.length} keywords.</p>
+                <div><h4 className="font-semibold text-green-500">Matched Keywords</h4><div className="flex flex-wrap gap-1 mt-1">{matchedKeywords.map(k => <span key={k} className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded-full">{k}</span>)}</div></div>
+                <div><h4 className="font-semibold text-red-500">Missing Keywords</h4><div className="flex flex-wrap gap-1 mt-1">{missingKeywords.map(k => <span key={k} className="bg-red-100 text-red-800 text-xs px-2 py-0.5 rounded-full">{k}</span>)}</div></div>
+            </div>
+          </div>
+          <div className="overflow-y-auto bg-secondary-bg p-4 rounded-md border border-border-color">
+            <h3 className="font-semibold text-primary-text mb-2">Gemini AI Analysis</h3>
+            {isLoading && <p className="text-secondary-text">Generating analysis...</p>}
+            {analysisResult && (<pre className="text-sm whitespace-pre-wrap font-sans text-primary-text">{analysisResult}</pre>)}
+            {!isLoading && !analysisResult && <p className="text-secondary-text">Analysis will appear here.</p>}
           </div>
         </div>
       </div>
@@ -727,24 +530,19 @@ const Preview: React.FC<{ resume: Resume; }> = ({ resume }) => {
   );
 };
 
-
 const App = () => {
   const LOCAL_STORAGE_KEY = 'resume-builder-data';
-  
   const [resume, setResume] = useState<Resume>(() => {
     try {
       const savedResume = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (savedResume) {
-        return JSON.parse(savedResume);
-      }
+      return savedResume ? JSON.parse(savedResume) : DEFAULT_RESUME;
     } catch (error) {
       console.error("Failed to parse resume from localStorage", error);
+      return DEFAULT_RESUME;
     }
-    return DEFAULT_RESUME;
   });
-
   const [activeTab, setActiveTab] = useState<Tab>('contact');
-
+  const [isAnalyzerOpen, setAnalyzerOpen] = useState(false);
   useEffect(() => {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(resume));
@@ -752,24 +550,17 @@ const App = () => {
         console.error("Failed to save resume to localStorage", error);
     }
   }, [resume]);
-
-
   return (
     <div className="bg-primary-bg text-primary-text min-h-screen flex flex-col">
       <Header activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-grow p-4 md:p-8 overflow-y-auto">
         {activeTab === 'preview' ? (
-          <Preview
-            resume={resume}
-          />
+          <Preview resume={resume} onOpenAnalyzer={() => setAnalyzerOpen(true)} />
         ) : (
-          <Editor
-            activeTab={activeTab}
-            resume={resume}
-            setResume={setResume}
-          />
+          <Editor activeTab={activeTab} resume={resume} setResume={setResume} />
         )}
       </main>
+      <KeywordAnalyzer isOpen={isAnalyzerOpen} onClose={() => setAnalyzerOpen(false)} resume={resume} />
     </div>
   );
 }
@@ -779,7 +570,6 @@ const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");
 }
-
 const root = ReactDOM.createRoot(rootElement);
 root.render(
   <React.StrictMode>
