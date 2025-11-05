@@ -1,0 +1,5 @@
+{
+  "name": "Offline AI Resume Builder",
+  "description": "An ATS-optimized resume builder that works fully offline. Features a React-based editor, multiple export templates, AI-powered content generation, and an ATS keyword analyzer. All data is stored locally in your browser.",
+  "requestFramePermissions": []
+}
