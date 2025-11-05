@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import Editor from './components/Editor';
 import Preview from './components/Preview';
 import Header from './components/Header';
@@ -21,7 +21,6 @@ function App() {
   });
 
   const [activeTab, setActiveTab] = useState<Tab>('contact');
-  const previewRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try {
@@ -38,7 +37,6 @@ function App() {
       <main className="flex-grow p-4 md:p-8 overflow-y-auto">
         {activeTab === 'preview' ? (
           <Preview
-            ref={previewRef}
             resume={resume}
           />
         ) : (

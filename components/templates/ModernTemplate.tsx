@@ -45,7 +45,12 @@ const ModernTemplate: React.FC<TemplateProps> = ({ resume }) => {
         </div>
       </header>
       
-      {summary && <Section title="Summary"><p>{summary}</p></Section>}
+      {summary && <Section title="Summary">
+        <div
+          className="[&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
+          dangerouslySetInnerHTML={{ __html: marked.parse(summary) }}
+        />
+      </Section>}
 
       {experience.length > 0 && (
         <Section title="Experience">
@@ -129,7 +134,10 @@ const ModernTemplate: React.FC<TemplateProps> = ({ resume }) => {
 
       {skills && (
         <Section title="Skills">
-          <p className="whitespace-pre-wrap">{skills}</p>
+          <div
+            className="whitespace-pre-wrap [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mt-1"
+            dangerouslySetInnerHTML={{ __html: marked.parse(skills) }}
+          />
         </Section>
       )}
     </div>
